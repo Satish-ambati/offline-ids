@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+release/
+build/engine/
+build/pyi-work/
+security-engine/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -1,0 +1,61 @@
+@import '@fontsource/sora/600.css';
+@import '@fontsource/sora/700.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sev: #56d4f5;
+  --ease: cubic-bezier(.2, .7, .2, 1);
+}
+html, body, #root { height: 100%; }
+body {
+  @apply bg-ink text-text font-sans antialiased;
+  background-image: radial-gradient(1200px 600px at 80% -10%, rgba(86, 212, 245, .07), transparent 60%),
+                    radial-gradient(900px 500px at -10% 110%, rgba(156, 140, 255, .06), transparent 60%);
+  font-variant-numeric: tabular-nums;
+}
+* { scrollbar-width: thin; scrollbar-color: #24365a transparent; }
+:focus-visible { outline: 2px solid #56d4f5; outline-offset: 2px; }
+
+@layer components {
+  .panel { @apply bg-panel border border-line rounded-lg; }
+  .panel-title { @apply font-display text-[13px] font-semibold tracking-wide text-text; }
+  .btn { @apply inline-flex items-center gap-2 px-3 py-1.5 rounded-md border border-line bg-raise text-sm text-text hover:border-signal/60 transition-colors disabled:opacity-40; }
+  .btn-primary { @apply border-signal/70 bg-signal/15 text-signal hover:bg-signal/25; }
+  .btn-danger { @apply border-alarm/70 bg-alarm/15 text-alarm hover:bg-alarm/25; }
+  .input { @apply bg-ink border border-line rounded-md px-2.5 py-1.5 text-sm text-text placeholder:text-mute/70 focus:border-signal/70 outline-none; }
+  .th { @apply text-left text-[11px] font-medium text-mute px-3 py-2 border-b border-line whitespace-nowrap; }
+  .td { @apply px-3 py-1.5 text-[13px] border-b border-line/50 align-top; }
+}
+
+/* ---- motion levels -------------------------------------------------------------- */
+[data-motion='off'] *, [data-motion='off'] *::before, [data-motion='off'] *::after { animation: none !important; transition: none !important; }
+[data-motion='reduced'] .heavy { animation: none !important; }
+
+@keyframes page-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.page-in { animation: page-in .28s var(--ease) both; }
+@keyframes row-in { from { opacity: 0; background: rgba(86, 212, 245, .12); } to { opacity: 1; } }
+.row-in { animation: row-in .8s ease-out both; }
+@keyframes pulse-ring { 0% { box-shadow: 0 0 0 0 var(--sev); } 100% { box-shadow: 0 0 0 10px transparent; } }
+.pulse { animation: pulse-ring 1.6s ease-out infinite; }
+@keyframes toast-in { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: none; } }
+.toast-in { animation: toast-in .25s var(--ease) both; }
+@keyframes tl-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@keyframes tl-pop { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+
+/* ---- 3D shield -------------------------------------------------------------------- */
+.shield-scene { perspective: 900px; width: 200px; height: 220px; }
+.shield-rot { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; animation: shield-spin 16s linear infinite; }
+.shield-rot > svg { position: absolute; inset: 0; margin: auto; width: 150px; height: 180px; }
+@keyframes shield-spin { from { transform: rotateX(-8deg) rotateY(0deg); } to { transform: rotateX(-8deg) rotateY(360deg); } }
+.ring3d { position: absolute; inset: 0; margin: auto; border-radius: 50%; border: 1.5px solid var(--sev); opacity: .55; transform-style: preserve-3d; }
+.ring3d.r1 { width: 210px; height: 210px; transform: rotateX(72deg); animation: ring-a 9s linear infinite; }
+.ring3d.r2 { width: 180px; height: 180px; transform: rotateY(72deg); animation: ring-b 12s linear infinite reverse; opacity: .35; }
+@keyframes ring-a { to { transform: rotateX(72deg) rotateZ(360deg); } }
+@keyframes ring-b { to { transform: rotateY(72deg) rotateZ(360deg); } }
+[data-motion='reduced'] .shield-rot { animation: none; transform: rotateX(-8deg) rotateY(-24deg); }

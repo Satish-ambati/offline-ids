@@ -1,0 +1,58 @@
+{
+  "name": "offline-ids",
+  "productName": "Endpoint Security Center",
+  "version": "1.0.0",
+  "description": "Offline AI-powered host and network intrusion detection for a single Windows PC",
+  "main": "dist-electron/main.js",
+  "author": "Final Year Project",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "dev:renderer": "vite",
+    "dev": "npm run build:electron && concurrently -k -n vite,electron \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron .\"",
+    "build:renderer": "vite build",
+    "build": "npm run build:electron && npm run build:renderer",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc -p electron/tsconfig.json --noEmit && tsc -p frontend/tsconfig.json --noEmit",
+    "build:engine": "powershell -ExecutionPolicy Bypass -File scripts/build-engine.ps1",
+    "dist": "npm run build && electron-builder --win --x64"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.1.0",
+    "@fontsource/ibm-plex-sans": "^5.1.0",
+    "@fontsource/sora": "^5.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2",
+    "recharts": "^2.12.7"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "edu.project.offline-ids",
+    "productName": "Endpoint Security Center",
+    "directories": { "output": "release" },
+    "files": ["dist-electron/**/*", "dist/renderer/**/*", "package.json"],
+    "extraResources": [{ "from": "build/engine", "to": "engine", "filter": ["**/*"] }],
+    "win": {
+      "target": ["nsis"],
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "perMachine": false }
+  }
+}
