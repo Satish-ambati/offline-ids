@@ -1,12 +1,14 @@
 import path from 'node:path';
 import { BrowserWindow, app, dialog, session } from 'electron';
 import { EngineConfig, startEngine, stopEngine } from './engine';
-import { registerIpc } from './ipc/handlers';
+import { ADMIN_RELAUNCH_FLAG, registerIpc } from './ipc/handlers';
 
 let win: BrowserWindow | null = null;
 const dev = !app.isPackaged && process.env.NODE_ENV === 'development';
+const isAdminRelaunch = process.argv.includes(ADMIN_RELAUNCH_FLAG);
 
-if (!app.requestSingleInstanceLock()) app.quit();
+const ownsLock = isAdminRelaunch || app.requestSingleInstanceLock();
+if (!ownsLock) app.quit();
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
 function createWindow(cfg: EngineConfig): void {
@@ -25,6 +27,7 @@ function createWindow(cfg: EngineConfig): void {
 }
 
 app.whenReady().then(async () => {
+  if (!ownsLock) return;   // another instance owns the lock; it will focus its own window
   if (app.isPackaged) {   // strict CSP in production: only local scripts and the loopback engine
     session.defaultSession.webRequest.onHeadersReceived((d, cb) => cb({
       responseHeaders: { ...d.responseHeaders, 'Content-Security-Policy': [

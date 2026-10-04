@@ -9,8 +9,12 @@ export default function Reports() {
   const [demo, setDemo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const load = () => api<typeof list>('/api/reports').then(setList);
-  useEffect(() => { load(); }, []);
+  const load = () => api<typeof list>('/api/reports').then(setList).catch(() => undefined);
+  useEffect(() => {
+    load();
+    const t = window.setInterval(() => { if (document.visibilityState === 'visible') load(); }, 15000);
+    return () => window.clearInterval(t);
+  }, []);
   const make = async () => { setBusy(true); setMsg(''); try { const r = await api<{ name: string }>('/api/reports', { method: 'POST', json: { hours, include_demo: demo } }); await load(); open(r.name); } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); } };
   const open = async (name: string) => { try { await window.ids?.openReport(name); if (!window.ids) setMsg('Reports open from the desktop app. They are stored in the data folder shown in Settings.'); } catch (e) { setMsg((e as Error).message); } };
   return (

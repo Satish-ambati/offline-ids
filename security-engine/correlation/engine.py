@@ -150,6 +150,7 @@ class CorrelationEngine:
                                        "risk_score", "status", "reason", "is_demo")}
         row["summary"] = inc.get("summary")
         row["timeline"] = inc.get("timeline")
+        row["components"] = inc.get("components")   # persisted so historical incidents keep their score breakdown
         self.db.upsert("incidents", row)
 
     def tick(self, now: float | None = None):

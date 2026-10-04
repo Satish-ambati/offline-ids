@@ -33,6 +33,28 @@ export interface Settings {
 }
 export interface EngineConfig { baseUrl: string; wsUrl: string; token: string; dev: boolean; }
 
+/** Every frame the engine pushes. Keeps store.tsx's switch exhaustive so a contract break fails typecheck. */
+export type SocketMessage =
+  | { type: 'hello'; status: Status; stats: Stats; risk: RiskState; alerts: Alert[]; incidents: Incident[] }
+  | { type: 'status'; status: Status }
+  | { type: 'stats'; stats: Stats }
+  | { type: 'risk'; risk: RiskState; metrics: Metric; system: Status['system'] }
+  | { type: 'incident'; incident: Incident }
+  | { type: 'event'; table: string; row: Row }
+  | { type: 'flows'; flows: Row[] }
+  | { type: 'alert'; alert: Alert };
+
+export type Row = Record<string, any>;
+
+const SOCKET_TYPES = ['hello', 'status', 'stats', 'risk', 'incident', 'event', 'flows', 'alert'] as const;
+
+/** Narrows an untrusted parsed frame; an unknown or malformed frame is dropped rather than reaching the store. */
+export function isSocketMessage(m: unknown): m is SocketMessage {
+  if (typeof m !== 'object' || m === null) return false;
+  const t = (m as { type?: unknown }).type;
+  return typeof t === 'string' && (SOCKET_TYPES as readonly string[]).includes(t);
+}
+
 declare global {
   interface Window {
     ids?: {

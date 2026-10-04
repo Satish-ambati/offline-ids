@@ -1,5 +1,6 @@
 """FastAPI layer: REST + WebSocket bound to 127.0.0.1 only, protected by a per-launch token."""
 import asyncio
+import json
 import logging
 import os
 import secrets
@@ -31,6 +32,17 @@ class ReportBody(BaseModel):
 
 class TrainBody(BaseModel):
     csv_path: str
+
+
+def _load_json(value) -> object | None:
+    """JSON columns are written by this app, but a truncated row must not turn into a 500."""
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except (ValueError, TypeError):
+        log.warning("discarding unparsable JSON column value")
+        return None
 
 
 def create_app(engine, hub, token: str | None = None) -> FastAPI:
@@ -83,24 +95,32 @@ def create_app(engine, hub, token: str | None = None) -> FastAPI:
         if table not in SEARCH_MAP:
             raise HTTPException(404, f"unknown table; choose from {sorted(SEARCH_MAP)}")
         f = dict(since=since, until=until, severity=severity, category=category, source=source, process=process, event_type=event_type, q=q)
-        return engine.db.search(table, {k: v for k, v in f.items() if v not in (None, "")}, limit, offset, include_demo=bool(engine.demo))
+        try:
+            return engine.db.search(table, {k: v for k, v in f.items() if v not in (None, "")}, limit, offset, include_demo=bool(engine.demo))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.post("/api/alerts/{alert_id}/ack", dependencies=guard)
     def ack(alert_id: int):
-        engine.ack_alert(alert_id)
+        if not engine.db.update("UPDATE alerts SET acknowledged=1 WHERE id=?", (alert_id,)):
+            raise HTTPException(404, "alert not found")
         return {"ok": True}
+
+    @app.post("/api/alerts/clear", dependencies=guard)
+    def clear_alerts():
+        return {"ok": True, "removed": engine.clear_alerts()}
 
     @app.get("/api/incidents/{incident_id}", dependencies=guard)
     def incident(incident_id: str):
-        import json
         r = engine.db.one("SELECT * FROM incidents WHERE id=?", (incident_id,))
         if not r:
             raise HTTPException(404, "incident not found")
-        for k in ("summary", "timeline"):
-            r[k] = json.loads(r[k]) if r.get(k) else None
+        r["components"] = _load_json(r.get("components"))
+        r["summary"] = _load_json(r.get("summary"))
+        r["timeline"] = _load_json(r.get("timeline"))
         r["related_alerts"] = engine.db.query("SELECT * FROM alerts WHERE incident_id=? ORDER BY ts", (incident_id,))
-        comps = engine.corr.incidents.get(r["key"], {}).get("components") if r.get("key") else None
-        r["components"] = comps
+        if r["components"] is None:   # incident predating the components column: fall back to the live engine
+            r["components"] = engine.corr.incidents.get(r.get("key") or "", {}).get("components")
         return r
 
     @app.get("/api/live/processes", dependencies=guard)
@@ -215,7 +235,9 @@ def create_app(engine, hub, token: str | None = None) -> FastAPI:
         await sock.accept()
         q = hub.subscribe()
         try:
-            await sock.send_json({"type": "hello", "status": engine.status(), "stats": engine.stats(), "risk": engine.latest_risk})
+            await sock.send_json({"type": "hello", "status": engine.status(), "stats": engine.stats(),
+                                 "risk": engine.latest_risk, "alerts": engine.recent_alerts(),
+                                 "incidents": engine.recent_incidents()})
             while True:
                 msg = await q.get()
                 await sock.send_json(msg)

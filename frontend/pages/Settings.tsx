@@ -2,12 +2,28 @@ import { useState } from 'react';
 import { Field, Notice, Panel, Toggle } from '../components/ui';
 import { useStore } from '../services/store';
 
+/** Each keystroke used to trigger a PUT (two SQLite commits plus a detector rebuild); commit on blur instead. */
+function useDraft<T>(value: T, commit: (v: T) => void) {
+  const [draft, setDraft] = useState(value);
+  // settings arrive after the first render, and can change elsewhere; adopt them unless the user is mid-edit
+  const [synced, setSynced] = useState(value);
+  if (synced !== value) { setSynced(value); setDraft(value); }
+  return {
+    value: draft,
+    onChange: (v: T) => setDraft(v),
+    onBlur: () => { if (draft !== value) { setSynced(draft); commit(draft); } },
+  };
+}
+
 export default function Settings() {
   const s = useStore();
   const st = s.settings;
   const [msg, setMsg] = useState('');
-  if (!st) return null;
   const set = (p: Record<string, unknown>) => s.saveSettings(p);
+  const iface = useDraft(st?.interface ?? '', (v) => set({ interface: v }));
+  const tick = useDraft(st?.tick_seconds ?? 5, (v) => set({ tick_seconds: v }));
+  const days = useDraft(st?.retention_days ?? 30, (v) => set({ retention_days: v }));
+  if (!st) return null;
   const admin = async () => { const r = await window.ids?.relaunchAdmin(); if (r && !r.ok && r.reason !== 'cancelled') setMsg(r.reason ?? 'Could not restart.'); };
   return (
     <div className="grid gap-5 xl:grid-cols-2">
@@ -20,9 +36,9 @@ export default function Settings() {
         <Toggle checked={st.autostart_protection} onChange={(v) => set({ autostart_protection: v })} label="Start protection when the app opens" />
       </div></Panel>
       <Panel title="Monitoring"><div className="space-y-4 px-4 pb-4">
-        <Field label="Capture interface (blank = automatic)"><input className="input w-full" value={st.interface} onChange={(e) => set({ interface: e.target.value })} placeholder="e.g. Wi-Fi" /></Field>
-        <Field label="Analysis interval (seconds)"><input type="number" min={2} max={60} className="input w-28" value={st.tick_seconds} onChange={(e) => set({ tick_seconds: Number(e.target.value) })} /></Field>
-        <Field label="Keep data for (days)"><input type="number" min={1} max={365} className="input w-28" value={st.retention_days} onChange={(e) => set({ retention_days: Number(e.target.value) })} /></Field>
+        <Field label="Capture interface (blank = automatic)"><input className="input w-full" value={iface.value} onChange={(e) => iface.onChange(e.target.value)} onBlur={iface.onBlur} placeholder="e.g. Wi-Fi" /></Field>
+        <Field label="Analysis interval (seconds)"><input type="number" min={2} max={60} className="input w-28" value={tick.value} onChange={(e) => tick.onChange(Number(e.target.value))} onBlur={tick.onBlur} /></Field>
+        <Field label="Keep data for (days)"><input type="number" min={1} max={365} className="input w-28" value={days.value} onChange={(e) => days.onChange(Number(e.target.value))} onBlur={days.onBlur} /></Field>
         <Field label="Ignore file extensions in integrity monitoring (comma separated)"><input className="input w-full" defaultValue={st.fim_excluded_ext.join(', ')} onBlur={(e) => set({ fim_excluded_ext: e.target.value.split(',').map((x) => x.trim()).filter(Boolean) })} /></Field>
       </div></Panel>
       <Panel title="Administrator access"><div className="space-y-3 px-4 pb-4 text-sm">

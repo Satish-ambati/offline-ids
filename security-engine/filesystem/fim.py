@@ -33,13 +33,22 @@ def classify(action: str, path: str, hash_status: str, in_baseline: bool) -> str
         return "LOW"
     if is_exec and action == "modified" and in_baseline:
         return "HIGH"
-    if is_exec and action in ("created", "renamed"):
+    # a pure rename never reaches here (identical content is ignored), so a baselined executable that arrives
+    # as "renamed" was both moved and altered
+    if is_exec and action == "renamed":
+        return "HIGH" if in_baseline else "MEDIUM"
+    if is_exec and action == "created":
         return "MEDIUM"
     if is_exec and action == "deleted":
         return "MEDIUM"
     if action == "deleted" and in_baseline:
         return "LOW"
     return "LOW"
+
+
+def _like_escape(s: str) -> str:
+    """Escape LIKE wildcards so a folder named e.g. C:\\My_Data cannot match C:\\My1Data."""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 class _Handler(FileSystemEventHandler):
@@ -60,7 +69,7 @@ class _Handler(FileSystemEventHandler):
 
     def on_moved(self, e):
         if not e.is_directory:
-            self.mon.queue_change("deleted", e.src_path)
+            # one event, not a delete plus a create: the move itself carries the link back to the old baseline
             self.mon.queue_change("renamed", e.dest_path, old_path=e.src_path)
 
 
@@ -90,8 +99,13 @@ class FileIntegrityMonitor:
         threading.Thread(target=self.build_baseline, args=([path],), daemon=True).start()
 
     def remove_folder(self, path: str):
+        path = os.path.abspath(path)
         self.db.execute("DELETE FROM fim_folders WHERE path=?", (path,))
-        self.db.execute("DELETE FROM fim_baseline WHERE path LIKE ?", (path.rstrip("\\/") + "%",))
+        # two patterns: the folder itself, and its descendants only. A single "folder%" would also match a
+        # sibling such as C:\Database when C:\Data is removed.
+        base = _like_escape(path.rstrip("\\/"))
+        self.db.execute("DELETE FROM fim_baseline WHERE path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\'",
+                        (base, base + _like_escape(os.sep) + "%"))
         if self.observer:      # simplest correct behaviour: reschedule everything
             self.observer.unschedule_all()
             for f in self.folders():
@@ -157,6 +171,9 @@ class FileIntegrityMonitor:
             return
         with self.lock:
             prev = self.pending.get(path)
+            if prev and prev[0] == "renamed":
+                return    # keep the pending move: it is what links this path to its baseline. Editing the file
+                          # afterwards must not downgrade it to a plain modify, or the rename reads as NEW.
             act = "created" if prev and prev[0] == "created" and action == "modified" else action
             self.pending[path] = (act, time.time(), old_path)
 
@@ -167,15 +184,22 @@ class FileIntegrityMonitor:
                 due = [(p, v) for p, v in self.pending.items() if now - v[1] >= 1.0]   # debounce 1 s
                 for p, _ in due:
                     self.pending.pop(p, None)
-            for path, (action, _, _) in due:
+                # a move must transfer its baseline before any deletion of the source path is processed
+                due.sort(key=lambda pv: pv[1][0] != "renamed")
+            for path, (action, _, old_path) in due:
                 try:
-                    self.process_change(action, path)
+                    self.process_change(action, path, old_path)
                 except Exception:
                     log.exception("fim process error")
 
-    def process_change(self, action: str, path: str) -> dict | None:
+    def process_change(self, action: str, path: str, old_path: str | None = None) -> dict | None:
         base = self.db.one("SELECT hash FROM fim_baseline WHERE path=?", (path,))
         old = base["hash"] if base else None
+        if old is None and action == "renamed" and old_path:
+            # a moved file has no baseline at its destination yet, so adopt the source's before classifying it
+            prev = self.db.one("SELECT hash FROM fim_baseline WHERE path=?", (old_path,))
+            if prev:
+                old = prev["hash"]
         max_bytes = int(self._get().get("fim_max_file_mb", 200)) * 1024 * 1024
         if action == "deleted":
             new = None
@@ -190,21 +214,29 @@ class FileIntegrityMonitor:
                 if action == "modified":
                     action = "created"
             elif old == new:
+                if action == "renamed" and old_path:      # unchanged content, still move the baseline across
+                    self.db.execute("DELETE FROM fim_baseline WHERE path=?", (old_path,))
+                    self._save_row(path, new)
                 return None            # touched but content identical: not an integrity event
             else:
                 status = "CHANGED"
-            try:
-                st = os.stat(path)
-                self.db.upsert("fim_baseline", {"path": path, "hash": new, "size": st.st_size, "mtime": st.st_mtime})
-            except OSError:
-                pass
-        risk = classify(action, path, status, base is not None)
+            if action == "renamed" and old_path:
+                self.db.execute("DELETE FROM fim_baseline WHERE path=?", (old_path,))
+            self._save_row(path, new)
+        risk = classify(action, path, status, old is not None)
         ev = {"ts": time.time(), "path": path, "action": action.upper(), "old_hash": old, "new_hash": new,
               "hash_status": status, "risk": risk, "is_demo": 0}
         self.mod_count += 1
         self.recent.append(ev["ts"])
         self.on_event(ev, self._mass_change())
         return ev
+
+    def _save_row(self, path: str, digest: str) -> None:
+        try:
+            st = os.stat(path)
+        except OSError:
+            return
+        self.db.upsert("fim_baseline", {"path": path, "hash": digest, "size": st.st_size, "mtime": st.st_mtime})
 
     def _mass_change(self) -> int:
         t = self._get()["thresholds"]

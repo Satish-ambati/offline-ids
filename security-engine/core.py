@@ -25,6 +25,7 @@ from risk.scoring import RiskEngine
 
 log = logging.getLogger("core")
 SEV_RANK = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+RISK_HISTORY_INTERVAL = 30.0
 UNUSUAL = ("\\appdata\\local\\temp\\", "\\temp\\", "\\downloads\\", "\\users\\public\\", "\\programdata\\")
 
 
@@ -63,6 +64,7 @@ class Engine:
         self.latest_risk = {"score": 0, "level": "LOW", "components": {}}
         self.latest_sys = {"cpu": 0, "mem": 0, "latency_ms": 0}
         self._stop = threading.Event()
+        self._last_risk_save = 0.0
         self._build_detectors()
 
     # ------------------------------------------------------------------ settings
@@ -342,7 +344,8 @@ class Engine:
                 score, comps = inc["risk_score"], inc.get("components", comps)
         self.latest_risk = {"score": score, "level": self.risk.level(score), "components": comps}
         self.last_scan = now
-        if int(now) % 30 < T:
+        if now - self._last_risk_save >= RISK_HISTORY_INTERVAL:   # elapsed time, not the wall clock
+            self._last_risk_save = now
             self.db.insert("risk_scores", {"ts": now, "score": score, "level": self.latest_risk["level"], "components": comps})
         self.publish("risk", risk=self.latest_risk, metrics={"pps": m["pps"], "bps": m["bps"], "cps": m["cps"], "ts": now}, system=sysm)
         self.publish("stats", stats=self.stats())
@@ -405,3 +408,15 @@ class Engine:
 
     def ack_alert(self, alert_id: int):
         self.db.execute("UPDATE alerts SET acknowledged=1 WHERE id=?", (alert_id,))
+
+    def clear_alerts(self) -> int:
+        """Delete stored alerts the user can currently see; returns how many rows were removed."""
+        return self.db.clear_alerts(include_demo=bool(self.demo))
+
+    def recent_alerts(self, limit: int = 100) -> list[dict]:
+        """Backlog for a (re)connecting client: the WebSocket is the only live delivery path, so anything raised
+        while the socket was down would otherwise be invisible until the next ack, demo toggle or restart."""
+        return self.db.search("alerts", {}, limit=limit, include_demo=bool(self.demo))
+
+    def recent_incidents(self, limit: int = 100) -> list[dict]:
+        return self.db.search("incidents", {}, limit=limit, include_demo=bool(self.demo))

@@ -66,3 +66,42 @@ def test_alert_cooldown(tmp_path):
     for _ in range(5):
         e.emit_alert(severity="LOW", category="X", source="s", description="same", kind="network_anomaly")
     assert len(e.db.query("SELECT * FROM alerts")) == 1
+
+
+def test_incident_score_components_survive_a_restart(tmp_path):
+    """components used to live only in engine.corr.incidents, so every historical incident lost its breakdown."""
+    from api import create_app
+    from fastapi.testclient import TestClient
+    e = make_engine(tmp_path)
+    e._on_process_created({"pid": 501, "ppid": 4, "name": "x.exe", "exe": r"C:\Users\a\AppData\Local\Temp\x.exe",
+                           "user": "a", "parent_name": "explorer.exe"})
+    e._on_new_external({"pid": 501, "process": "x.exe", "local": "10.0.0.5:5000", "remote": "8.8.4.4:443", "proto": "TCP"})
+    inc = e.corr.open_incidents()[0]
+    assert inc["components"], "the live incident should carry its score components"
+
+    e.corr.tick(inc["updated_ts"] + 10_000)          # idle timeout closes it and drops it from memory
+    assert inc["id"] not in e.corr.incidents
+
+    restarted = Engine(Database(tmp_path / "t.sqlite3"), Hub())   # same file, empty in-memory state
+    app = create_app(restarted, restarted.hub, token=None)
+    with TestClient(app) as c:
+        detail = c.get(f"/api/incidents/{inc['id']}").json()
+    assert detail["components"] == inc["components"]
+    assert detail["timeline"] and detail["reason"]
+
+
+def test_risk_history_is_written_on_elapsed_time_not_the_wall_clock(tmp_path):
+    e = make_engine(tmp_path)
+    e.tick(); e.tick(); e.tick()                     # three ticks within 30 s must not spam risk_scores
+    assert len(e.db.query("SELECT * FROM risk_scores")) == 1
+    e._last_risk_save -= 31
+    e.tick()
+    assert len(e.db.query("SELECT * FROM risk_scores")) == 2
+
+
+def test_recent_alerts_backlog_hides_demo_data_when_demo_is_off(tmp_path):
+    e = make_engine(tmp_path)
+    e.emit_alert(severity="HIGH", category="Port Scan", source="9.9.9.9", description="real")
+    e.emit_alert(severity="HIGH", category="Port Scan", source="9.9.9.9", description="fake", demo=True)
+    assert [a["description"] for a in e.recent_alerts()] == ["real"]
+    assert len(e.db.search("alerts", {}, include_demo=True)) == 2

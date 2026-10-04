@@ -1,4 +1,4 @@
-import type { EngineConfig } from '../types';
+import { isSocketMessage, type EngineConfig, type SocketMessage } from '../types';
 
 let cfg: EngineConfig | null = null;
 
@@ -12,6 +12,8 @@ export async function loadConfig(): Promise<EngineConfig> {
   return cfg;
 }
 
+export function resetConfig(): void { cfg = null; }
+
 export async function api<T = unknown>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   const c = await loadConfig();
   const headers: Record<string, string> = { 'X-Engine-Token': c.token, ...(init.headers as Record<string, string>) };
@@ -23,7 +25,13 @@ export async function api<T = unknown>(path: string, init: RequestInit & { json?
     try { msg = (await res.json()).detail ?? msg; } catch { /* ignore */ }
     throw new Error(String(msg));
   }
-  return res.json() as Promise<T>;
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${path} returned a non-JSON response`);
+  }
 }
 
 export const qs = (o: Record<string, string | number | undefined | null>) => {
@@ -33,13 +41,17 @@ export const qs = (o: Record<string, string | number | undefined | null>) => {
   return s ? `?${s}` : '';
 };
 
-export async function openSocket(onMessage: (m: any) => void, onState: (up: boolean) => void): Promise<() => void> {
+export async function openSocket(onMessage: (m: SocketMessage) => void, onState: (up: boolean) => void): Promise<() => void> {
   const c = await loadConfig();
   let ws: WebSocket | null = null, closed = false, timer: number | undefined;
   const connect = () => {
     ws = new WebSocket(`${c.wsUrl}?token=${encodeURIComponent(c.token)}`);
     ws.onopen = () => onState(true);
-    ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch { /* ignore malformed */ } };
+    ws.onmessage = (e) => {
+      let m: unknown;
+      try { m = JSON.parse(e.data); } catch { return; }
+      if (isSocketMessage(m)) onMessage(m);
+    };
     ws.onclose = () => { onState(false); if (!closed) timer = window.setTimeout(connect, 1500); };
   };
   connect();

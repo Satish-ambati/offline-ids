@@ -9,6 +9,9 @@ const SEVERITY_TITLE: Record<string, string> = {
   LOW: 'Informational Event', MEDIUM: 'Suspicious Activity', HIGH: 'High-Risk Activity', CRITICAL: 'Critical Security Incident',
 };
 
+// The elevated copy is meant to replace the running one, so it must not be turned away by the single-instance lock.
+export const ADMIN_RELAUNCH_FLAG = '--relaunch-admin';
+
 export function registerIpc(getWindow: () => BrowserWindow | null, cfg: EngineConfig): void {
   ipcMain.handle('ids:get-config', () => cfg);
 
@@ -27,7 +30,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null, cfg: EngineCo
   });
 
   ipcMain.handle('ids:open-report', async (_e, name: string) => {
+    // basename alone still yields '..' for a traversal attempt, which resolves to a directory (EISDIR)
     const safe = path.basename(String(name));
+    if (!/^[\w.-]+\.pdf$/i.test(safe)) throw new Error('Invalid report name.');
     const res = await fetch(`${cfg.baseUrl}/api/reports/${encodeURIComponent(safe)}`, { headers: { 'X-Engine-Token': cfg.token } });
     if (!res.ok) throw new Error(`Report download failed (${res.status})`);
     const target = path.join(os.tmpdir(), safe);
@@ -43,9 +48,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null, cfg: EngineCo
     const w = getWindow();
     const choice = await (w ? dialog.showMessageBox(w, msgOpts()) : dialog.showMessageBox(msgOpts()));
     if (choice.response !== 0) return { ok: false, reason: 'cancelled' };
-    const exe = process.execPath.replace(/'/g, "''");
-    const args = (app.isPackaged ? [] : [app.getAppPath()]).map((a) => `"${a}"`).join(' ').replace(/'/g, "''");
-    const ps = args ? `Start-Process -FilePath '${exe}' -ArgumentList '${args}' -Verb RunAs` : `Start-Process -FilePath '${exe}' -Verb RunAs`;
+    const argv = [...(app.isPackaged ? [] : [app.getAppPath()]), ADMIN_RELAUNCH_FLAG]
+      .map((a) => `'${a.replace(/'/g, "''")}'`).join(' ');
+    const ps = `Start-Process -FilePath '${process.execPath.replace(/'/g, "''")}' -ArgumentList ${argv} -Verb RunAs`;
     spawn('powershell', ['-NoProfile', '-Command', ps], { detached: true, windowsHide: true, stdio: 'ignore' }).unref();
     setTimeout(() => app.quit(), 400);
     return { ok: true };

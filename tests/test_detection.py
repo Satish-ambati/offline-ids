@@ -73,3 +73,26 @@ def test_process_assessment_is_behavioural_not_name_based():
     assert assess_process("tool.exe", r"C:\Users\a\AppData\Local\Temp\tool.exe", "explorer.exe")[0]["kind"] == "unusual_path"
     assert assess_process("powershell.exe", r"C:\Windows\System32\powershell.exe", "WINWORD.EXE")[0]["kind"] == "parent_child_anomaly"
     assert assess_process("svchost.exe", r"C:\Users\a\Downloads\svchost.exe", "explorer.exe")
+
+
+EVT = ("<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System>"
+       "<EventID>4625</EventID><EventRecordID>7</EventRecordID><Channel>Security</Channel>"
+       "<TimeCreated SystemTime='{ts}'/></System><EventData>"
+       "<Data Name='TargetUserName'>bob</Data><Data Name='LogonType'>3</Data>"
+       "<Data Name='IpAddress'>10.0.0.9</Data></EventData></Event>")
+
+
+def test_event_log_timestamps_are_utc_and_ignore_the_local_offset(monkeypatch):
+    """TimeCreated is UTC. The old conversion applied the *current* local offset to the event's own date, so it
+    drifted by an hour for half of every year in any DST zone. Asserting independence from time.timezone also
+    catches that on machines whose zone has no DST (and time.tzset does not exist on Windows anyway)."""
+    import datetime
+    import time as time_mod
+
+    from host.eventlog import parse_event
+    for stamp in ("2026-01-15T10:30:00.000Z", "2026-07-15T10:30:00.000Z"):
+        want = datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+        assert parse_event(EVT.format(ts=stamp))["ts"] == want, stamp
+        for bogus_offset in (0, 3600, -12600):        # UTC, BST+1, IST-5:30-ish
+            monkeypatch.setattr(time_mod, "timezone", bogus_offset, raising=False)
+            assert parse_event(EVT.format(ts=stamp))["ts"] == want, f"{stamp} shifted by local offset {bogus_offset}"

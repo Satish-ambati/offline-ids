@@ -1,10 +1,13 @@
 """SQLite storage. Everything is stored locally; passwords and command lines are never stored."""
 import json
+import logging
 import sqlite3
 import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable
+
+log = logging.getLogger("database")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS security_events (
@@ -32,7 +35,8 @@ CREATE TABLE IF NOT EXISTS alerts (
   is_demo INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS incidents (
   id TEXT PRIMARY KEY, opened_ts REAL, updated_ts REAL, severity TEXT, category TEXT, title TEXT, key TEXT,
-  risk_score INTEGER, status TEXT, reason TEXT, summary TEXT, timeline TEXT, is_demo INTEGER DEFAULT 0);
+  risk_score INTEGER, status TEXT, reason TEXT, summary TEXT, timeline TEXT, components TEXT,
+  is_demo INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS risk_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, score INTEGER, level TEXT, components TEXT);
 CREATE TABLE IF NOT EXISTS fim_folders (path TEXT PRIMARY KEY);
@@ -62,23 +66,66 @@ SEARCH_MAP = {
 }
 
 
+# Every table the app is allowed to write to.
+TABLES = frozenset({
+    "security_events", "network_events", "host_events", "process_events", "file_events", "service_events",
+    "alerts", "incidents", "risk_scores", "fim_folders", "fim_baseline", "settings",
+})
+
+
 class Database:
     def __init__(self, path: Path | str):
         self.path = str(path)
         self.lock = threading.RLock()
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self._cols: dict[str, frozenset[str]] = {}
         with self.lock:
             self.conn.execute("PRAGMA journal_mode=WAL")
             self.conn.execute("PRAGMA synchronous=NORMAL")
             self.conn.executescript(SCHEMA)
             self.conn.commit()
+            self._load_columns()
+            self._migrate()
 
+    # -- schema introspection ------------------------------------------
+    def _load_columns(self) -> None:
+        """Cache the real column names; SQLite cannot bind identifiers, so writes are validated against these."""
+        self._cols = {}
+        for t in TABLES:
+            self._cols[t] = frozenset(r["name"] for r in self.conn.execute(f"PRAGMA table_info({t})"))
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created (CREATE TABLE IF NOT EXISTS never alters)."""
+        for table, ddl in (("incidents", "components TEXT"),):
+            col = ddl.split()[0]
+            if col not in self._cols.get(table, frozenset()):
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+                log.info("migrated %s: added column %s", table, col)
+        self.conn.commit()
+        self._load_columns()
+
+    def _target(self, table: str, cols: list[str]) -> list[str]:
+        if table not in TABLES:
+            raise ValueError(f"refusing to write to unknown table {table!r}")
+        bad = [c for c in cols if c not in self._cols.get(table, frozenset())]
+        if bad:
+            raise ValueError(f"refusing to write unknown column(s) {bad} to {table}")
+        return cols
+
+    # -- statements ----------------------------------------------------
     def execute(self, sql: str, params: Iterable = ()) -> int:
         with self.lock:
             cur = self.conn.execute(sql, tuple(params))
             self.conn.commit()
             return cur.lastrowid
+
+    def update(self, sql: str, params: Iterable = ()) -> int:
+        """Run an UPDATE/DELETE and return the number of rows matched (0 = nothing matched)."""
+        with self.lock:
+            cur = self.conn.execute(sql, tuple(params))
+            self.conn.commit()
+            return cur.rowcount
 
     def query(self, sql: str, params: Iterable = ()) -> list[dict]:
         with self.lock:
@@ -89,21 +136,21 @@ class Database:
         return rows[0] if rows else None
 
     def insert(self, table: str, row: dict) -> int:
-        cols = list(row)
+        cols = self._target(table, list(row))
         sql = f"INSERT INTO {table} ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})"
         return self.execute(sql, [self._enc(row[c]) for c in cols])
 
     def insert_many(self, table: str, rows: list[dict]) -> None:
         if not rows:
             return
-        cols = list(rows[0])
+        cols = self._target(table, list(rows[0]))
         sql = f"INSERT INTO {table} ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})"
         with self.lock:
             self.conn.executemany(sql, [[self._enc(r.get(c)) for c in cols] for r in rows])
             self.conn.commit()
 
     def upsert(self, table: str, row: dict) -> None:
-        cols = list(row)
+        cols = self._target(table, list(row))
         sql = f"INSERT OR REPLACE INTO {table} ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})"
         self.execute(sql, [self._enc(row[c]) for c in cols])
 
@@ -115,6 +162,10 @@ class Database:
         if table not in SEARCH_MAP:
             raise ValueError(f"unknown table {table}")
         m = SEARCH_MAP[table]
+        unsupported = sorted(set(filters) - set(m) - {"since", "until"})
+        if unsupported:
+            raise ValueError(f"filter(s) {', '.join(unsupported)} are not supported for {table}; "
+                             f"supported: {', '.join(sorted(set(m) | {'since', 'until'}))}")
         tscol = "updated_ts" if table == "incidents" else "ts"
         where, params = [], []
         if filters.get("since"):
@@ -146,6 +197,11 @@ class Database:
         for t in ("security_events", "network_events", "host_events", "process_events", "file_events",
                   "service_events", "alerts", "risk_scores"):
             self.execute(f"DELETE FROM {t} WHERE ts < ?", (cutoff,))
+
+    def clear_alerts(self, include_demo: bool = False) -> int:
+        """Delete stored alerts. Mirrors search(): demo rows survive while demo mode is off. Returns rows removed."""
+        sql = "DELETE FROM alerts" if include_demo else "DELETE FROM alerts WHERE is_demo = 0"
+        return self.update(sql)
 
     def purge_demo(self) -> None:
         for t in ("security_events", "network_events", "host_events", "process_events", "file_events",

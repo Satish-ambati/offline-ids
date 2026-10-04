@@ -1,4 +1,5 @@
 """Windows Event Log monitoring through wevtutil (read-only). Never reads or stores passwords."""
+import calendar
 import logging
 import os
 import subprocess
@@ -29,7 +30,9 @@ def parse_event(xml_text: str) -> dict | None:
         rec = int(sysn.find("e:EventRecordID", NS).text)
         chan = sysn.find("e:Channel", NS).text
         ts_raw = sysn.find("e:TimeCreated", NS).get("SystemTime")
-        ts = time.mktime(time.strptime(ts_raw[:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone
+        # SystemTime is UTC; mktime interprets the naive struct as local time, so convert from UTC explicitly.
+        # Subtracting time.timezone instead would apply today's offset to an event from the other DST season.
+        ts = calendar.timegm(time.strptime(ts_raw[:19], "%Y-%m-%dT%H:%M:%S"))
         d = _data(root)
     except Exception:
         return None

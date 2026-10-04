@@ -11,9 +11,23 @@ export default function Alerts() {
   const s = useStore();
   const [f, setF] = useState<Filters>(noFilters);
   const [rows, setRows] = useState<Alert[]>([]);
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
   useEffect(() => { api<Alert[]>(`/api/events/alerts${qs({ ...toQuery(f), limit: 500 })}`).then(setRows).catch(() => undefined); }, [f, s.alerts.length, s.alerts[0]?.acknowledged]);
+  // the first click only arms the button; it disarms itself so a stray later click cannot delete anything
+  useEffect(() => { if (!armed) return; const t = window.setTimeout(() => setArmed(false), 5000); return () => window.clearTimeout(t); }, [armed]);
+  const clear = async () => {
+    if (!armed) { setArmed(true); return; }
+    setBusy(true);
+    try { await s.clearAlerts(); } finally { setArmed(false); setBusy(false); }
+  };
   return (
-    <Panel title="Alerts">
+    <Panel title="Alerts" right={
+      <button className={armed ? 'btn btn-danger' : 'btn'} disabled={busy || !s.alerts.length} onClick={clear}
+        title="Delete every stored alert. Incidents and the other event history are kept.">
+        {busy ? 'Clearing…' : armed ? 'Click again to confirm' : `Clear all${s.alerts.length ? ` (${s.alerts.length})` : ''}`}
+      </button>
+    }>
       <FilterBar f={f} set={setF} show={['q', 'severity', 'category', 'source', 'since']} />
       <Table rows={rows} empty="No alerts match these filters." rowKey={(a) => a.id}
         cols={[{ h: 'Time', r: (a) => <span className="font-mono text-xs">{fmtDateTime(a.ts)}</span>, w: '160px' },

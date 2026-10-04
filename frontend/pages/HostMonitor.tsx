@@ -11,7 +11,12 @@ export default function HostMonitor() {
   const s = useStore();
   const [svc, setSvc] = useState<{ name: string; display_name: string; status: string; start_type: string; binpath: string }[]>([]);
   const [q, setQ] = useState('');
-  useEffect(() => { api<typeof svc>('/api/live/services').then(setSvc).catch(() => undefined); }, []);
+  useEffect(() => {
+    const load = () => api<typeof svc>('/api/live/services').then(setSvc).catch(() => undefined);
+    load();
+    const t = window.setInterval(() => { if (document.visibilityState === 'visible') load(); }, 20000);
+    return () => window.clearInterval(t);
+  }, []);
   const m = s.status?.modules.eventlog;
   return (
     <div className="space-y-5">
