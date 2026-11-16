@@ -173,3 +173,10 @@ class CorrelationEngine:
     def open_incidents(self) -> list[dict]:
         with self.lock:
             return [i for i in self.incidents.values() if i["status"] == "open"]
+
+    def reset(self) -> None:
+        with self.lock:
+            self.groups.clear()
+            self.incidents.clear()
+            self.proc_info.clear()
+            self.all_signals.clear()

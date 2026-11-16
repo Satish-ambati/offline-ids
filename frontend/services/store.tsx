@@ -45,6 +45,7 @@ type Action =
   | { t: 'settings'; settings: Settings } | { t: 'alert'; alert: Alert } | { t: 'alerts'; alerts: Alert[] }
   | { t: 'ack'; id: number }
   | { t: 'alerts-clear' }
+  | { t: 'clear-data' }
   | { t: 'incident'; incident: Incident } | { t: 'incidents'; incidents: Incident[] }
   | { t: 'risk'; risk: RiskState; metric: Metric; system: Status['system'] } | { t: 'event'; table: Tables; rows: Row[] }
   | { t: 'toast'; toast: Toast } | { t: 'untoast'; id: number };
@@ -69,6 +70,7 @@ function reducer(s: State, a: Action): State {
     case 'alerts': return { ...s, alerts: mergeAlerts(s.alerts, a.alerts) };
     case 'ack': return { ...s, alerts: s.alerts.map((x) => (x.id === a.id ? { ...x, acknowledged: 1 } : x)) };
     case 'alerts-clear': return { ...s, alerts: [] };
+    case 'clear-data': return { ...s, alerts: [], incidents: {}, events: empty, metrics: [], risk: { score: 0, level: 'LOW', components: {} } };
     case 'incident': return { ...s, incidents: { ...s.incidents, [a.incident.id]: a.incident } };
     case 'incidents': return { ...s, incidents: { ...Object.fromEntries(a.incidents.map((i) => [i.id, i])), ...s.incidents } };
     case 'risk': return {
@@ -125,6 +127,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           case 'incident': d({ t: 'incident', incident: m.incident }); break;
           case 'event': if (TABLES.includes(m.table as Tables)) d({ t: 'event', table: m.table as Tables, rows: [m.row] }); break;
           case 'flows': d({ t: 'event', table: 'network_events', rows: m.flows }); break;
+          case 'cleared': d({ t: 'clear-data' }); void refresh(); break;
           case 'alert': {
             const a = m.alert;
             d({ t: 'alert', alert: a });

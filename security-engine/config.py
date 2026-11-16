@@ -38,6 +38,7 @@ DEFAULT_SETTINGS = {
     "tick_seconds": 5,
     "autostart_protection": False,
     "retention_days": 30,
+    "scan_every_minutes": 5,
     "fim_excluded_ext": [".tmp", ".log", ".etl"],
     "fim_max_file_mb": 200,
     "thresholds": {

@@ -207,3 +207,11 @@ class Database:
         for t in ("security_events", "network_events", "host_events", "process_events", "file_events",
                   "service_events", "alerts", "incidents"):
             self.execute(f"DELETE FROM {t} WHERE is_demo = 1")
+
+    def purge_recorded(self, include_demo: bool = True) -> None:
+        """Remove recorded events, alerts, incidents and risk history so stale detections do not linger."""
+        tables = ("security_events", "network_events", "host_events", "process_events", "file_events",
+                  "service_events", "alerts", "incidents", "risk_scores")
+        where = "" if include_demo else " WHERE is_demo = 0"
+        for t in tables:
+            self.execute(f"DELETE FROM {t}{where}")

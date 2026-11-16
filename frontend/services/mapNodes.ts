@@ -19,12 +19,18 @@ export function buildNodes(status: Status | undefined, alerts: Alert[], events: 
   add({ id: 'mon-proc', kind: 'monitor', label: 'Process Monitor', state: m.process?.state, detail: { State: m.process?.state ?? 'stopped', Info: m.process?.detail || 'Process creation and parent-child tracking' } });
 
   for (const a of alerts.filter((x) => recent(x.ts)).slice(0, 80)) {
-    if (a.source && /^[0-9a-f:.]+$/i.test(a.source) && a.source !== 'local') add({ id: `src-${a.source}`, kind: 'source', label: a.source, severity: a.severity, detail: { Address: a.source, Latest: a.category, When: fmtTime(a.ts) } });
+    if (a.source && a.source !== 'local' && (a.details as any)?.dst) {
+      const host = String(a.source);
+      add({ id: `src-${host}`, kind: 'source', label: host, severity: a.severity, detail: { Host: host, Address: String((a.details as any).dst), Latest: a.category, When: fmtTime(a.ts) } });
+    } else if (a.source && /^[0-9a-f:.]+$/i.test(a.source) && a.source !== 'local') {
+      add({ id: `src-${a.source}`, kind: 'source', label: a.source, severity: a.severity, detail: { Address: a.source, Latest: a.category, When: fmtTime(a.ts) } });
+    }
   }
   const seenIp = new Set<string>();
   for (const f of events.network_events.filter((x) => x.direction === 'in').slice(0, 60)) {
     const ip = f.src_ip; if (!ip || ip === 'local' || seenIp.has(ip) || seenIp.size >= 4) continue; seenIp.add(ip);
-    add({ id: `src-${ip}`, kind: 'source', label: ip, severity: 'LOW', detail: { Address: ip, Protocol: f.protocol, 'Local port': String(f.dst_port) } });
+    const host = f.src_host && f.src_host !== ip ? f.src_host : ip;
+    add({ id: `src-${ip}`, kind: 'source', label: host, severity: 'LOW', detail: { Host: host, Address: ip, Protocol: f.protocol, 'Local port': String(f.dst_port) } });
   }
   for (const p of events.process_events.filter((x) => x.action === 'created' && recent(x.ts)).slice(0, 60)) {
     const reasons = parse<string[]>(p.reasons, []);

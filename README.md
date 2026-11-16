@@ -119,7 +119,7 @@ Npcap is a separate installer and is not bundled (its licence restricts redistri
 ## Troubleshooting
 | Symptom | Fix |
 |---|---|
-| "Security engine failed to start" | Run `scripts\setup.ps1`; check `%APPDATA%\OfflineIDS\logs\engine.log` |
+| "Security engine failed to start" | Run `scripts\setup.ps1`; check `%APPDATA%\OfflineIDS\logs\engine.log`. First launch after boot can take up to ~2 min while Python loads (sklearn/scapy); the app waits 120 s by default (override with `IDS_ENGINE_TIMEOUT_MS`) |
 | Network module "unavailable" | Install Npcap (WinPcap-compatible mode) and restart as administrator |
 | No login events | Restart as administrator; enable *Audit Logon* in local security policy |
 | Heavy CPU from animations | Settings → Animations → Reduced/Off |

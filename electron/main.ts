@@ -39,7 +39,7 @@ app.whenReady().then(async () => {
     createWindow(await startEngine());
   } catch (err) {
     dialog.showErrorBox('Security engine failed to start',
-      `${(err as Error).message}\n\nCheck that Python dependencies are installed (see README, "Python environment").`);
+      `${(err as Error).message}\n\nCheck the log at %APPDATA%\\OfflineIDS\\logs\\engine.log and README, "Python environment".`);
     app.quit();
   }
 });

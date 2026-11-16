@@ -1,12 +1,46 @@
 """Socket table poller: maps TCP/UDP connections to owning processes (Process <-> Network link)."""
 import ipaddress
 import logging
+import socket
 import threading
 import time
 
 import psutil
 
 log = logging.getLogger("network.connections")
+
+_DNS: dict[str, tuple[str, float]] = {}
+_DNS_TTL = 600.0
+_DNS_LOCK = threading.Lock()
+
+
+def resolve_host(ip: str) -> str:
+    if not ip or ip in ("local", "*", "0.0.0.0", "::"):
+        return ip
+    try:
+        ipaddress.ip_address(ip.split("%")[0])
+    except ValueError:
+        return ip
+    now = time.time()
+    with _DNS_LOCK:
+        hit = _DNS.get(ip)
+        if hit and now - hit[1] < _DNS_TTL:
+            return hit[0]
+    name = ip
+    try:
+        name = socket.getfqdn(ip)
+        if not name or name == ip:
+            name = socket.getnameinfo((ip, 0), 0)[0]
+    except Exception:
+        name = ip
+    if not name:
+        name = ip
+    with _DNS_LOCK:
+        _DNS[ip] = (name, now)
+        if len(_DNS) > 2000:
+            for k in list(_DNS)[:500]:
+                _DNS.pop(k, None)
+    return name
 
 
 def is_external(ip: str) -> bool:
@@ -48,7 +82,9 @@ class ConnectionTracker(threading.Thread):
         for c in conns:
             laddr = f"{c.laddr.ip}:{c.laddr.port}" if c.laddr else ""
             raddr = f"{c.raddr.ip}:{c.raddr.port}" if c.raddr else ""
+            rhost = resolve_host(c.raddr.ip) if c.raddr else ""
             row = {"pid": c.pid, "process": self._pname(c.pid), "local": laddr, "remote": raddr,
+                   "remote_ip": c.raddr.ip if c.raddr else "", "remote_host": rhost,
                    "status": c.status, "proto": "TCP" if c.type == 1 else "UDP",
                    "external": bool(c.raddr and is_external(c.raddr.ip))}
             snap.append(row)

@@ -7,6 +7,10 @@ import { app } from 'electron';
 
 export interface EngineConfig { baseUrl: string; wsUrl: string; token: string; dev: boolean; }
 
+// Loading numpy/scikit-learn/scapy from a cold disk can take well over 30 s on Windows
+// (antivirus scanning, slow HDD), so allow a generous first-start window.
+const STARTUP_TIMEOUT_MS = Number(process.env.IDS_ENGINE_TIMEOUT_MS) || 120_000;
+
 let child: ChildProcess | null = null;
 let config: EngineConfig | null = null;
 let spawnError: Error | null = null;
@@ -26,6 +30,7 @@ function freePort(): Promise<number> {
 function resolveCommand(): { cmd: string; args: string[]; cwd: string } {
   if (app.isPackaged) {
     const exe = path.join(process.resourcesPath, 'engine', 'engine.exe');
+    if (!existsSync(exe)) throw new Error(`Bundled engine not found at ${exe}. Build it with "npm run build:engine" before packaging.`);
     return { cmd: exe, args: [], cwd: path.dirname(exe) };
   }
   const root = path.resolve(__dirname, '..');
@@ -35,10 +40,10 @@ function resolveCommand(): { cmd: string; args: string[]; cwd: string } {
   return { cmd: py, args: ['main.py'], cwd: dir };
 }
 
-async function waitHealthy(baseUrl: string, timeoutMs = 30000): Promise<void> {
+async function waitHealthy(baseUrl: string, timeoutMs = STARTUP_TIMEOUT_MS): Promise<void> {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
-    // a missing interpreter raises 'error' with no exit code, so without this the loop would spin for 30 s
+    // a missing interpreter raises 'error' with no exit code, so without this the loop would spin until the timeout
     if (spawnError) throw new Error(`${spawnError.message}\nCheck that Python dependencies are installed (see README, "Python environment").`);
     try {
       const r = await fetch(`${baseUrl}/api/health`);
@@ -47,7 +52,7 @@ async function waitHealthy(baseUrl: string, timeoutMs = 30000): Promise<void> {
     if (child && child.exitCode !== null) throw new Error(`Security engine exited (code ${child.exitCode}).\n${engineLog.slice(-1500)}`);
     await new Promise((r) => setTimeout(r, 300));
   }
-  throw new Error(`Security engine did not become ready.\n${engineLog.slice(-1500)}`);
+  throw new Error(`Security engine did not become ready within ${Math.round(timeoutMs / 1000)}s.\n${engineLog.slice(-1500) || '(no output from the engine)'}`);
 }
 
 export async function startEngine(): Promise<EngineConfig> {
@@ -68,7 +73,8 @@ export async function startEngine(): Promise<EngineConfig> {
     await waitHealthy(baseUrl);
   } catch (e) {
     stopEngine();
-    throw e;
+    const detail = `Interpreter: ${cmd}\nWorking directory: ${cwd}\nLog: %APPDATA%\\OfflineIDS\\logs\\engine.log`;
+    throw new Error(`${(e as Error).message}\n\n${detail}`);
   }
   config = { baseUrl, wsUrl: `ws://127.0.0.1:${port}/ws`, token, dev: !app.isPackaged };
   return config;

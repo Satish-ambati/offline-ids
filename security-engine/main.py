@@ -3,6 +3,9 @@ import argparse
 import logging
 import sys
 
+# Printed before the heavy imports below so Electron can show progress if startup is slow.
+print("security-engine: starting (loading dependencies)...", file=sys.stderr, flush=True)
+
 import uvicorn
 
 from api import create_app

@@ -5,7 +5,7 @@ import { api } from '../services/api';
 import { fmtBytes, fmtTime } from '../services/format';
 import { useStore } from '../services/store';
 
-interface Conn { pid: number | null; process: string; local: string; remote: string; status: string; proto: string; external: boolean; }
+interface Conn { pid: number | null; process: string; local: string; remote: string; remote_ip?: string; remote_host?: string; status: string; proto: string; external: boolean; }
 
 export default function NetworkMonitor() {
   const s = useStore();
@@ -27,15 +27,17 @@ export default function NetworkMonitor() {
       </Panel>
       <Panel title="Recent flows" right={<span className="text-[11px] text-mute">Aggregated per flow; payloads are never stored.</span>}>
         <Table rows={s.events.network_events.slice(0, 80)} empty="No flows captured yet."
-          cols={[{ h: 'Time', r: (r) => <span className="font-mono text-xs">{fmtTime(r.ts)}</span> }, { h: 'Dir', r: (r) => (r.direction === 'in' ? '← in' : '→ out') },
-            { h: 'Source', r: (r) => `${r.src_ip}${r.src_port ? `:${r.src_port}` : ''}`, cls: 'font-mono' }, { h: 'Destination', r: (r) => `${r.dst_ip}${r.dst_port ? `:${r.dst_port}` : ''}`, cls: 'font-mono' },
-            { h: 'Proto', r: (r) => r.protocol }, { h: 'TCP flags', r: (r) => r.flags || '—', cls: 'font-mono' }, { h: 'Packets', r: (r) => r.packets }, { h: 'Size', r: (r) => fmtBytes(r.bytes ?? 0) }, { h: 'Process', r: (r) => r.process || '—' }]} />
+          cols={[{ h: 'Time', r: (r) => <span className="font-mono text-xs">{fmtTime(r.ts)}</span> }, { h: 'Dir', r: (r) => (r.direction === 'in' ? 'in' : 'out') },
+            { h: 'Source', r: (r) => <div><div className="font-mono">{`${r.src_host || r.src_ip || '�?"'}${r.src_port ? `:${r.src_port}` : ''}`}</div>{r.src_host && r.src_host !== r.src_ip && r.src_ip && r.src_ip !== 'local' ? <div className="text-[11px] text-mute">{r.src_ip}</div> : null}</div> },
+            { h: 'Destination', r: (r) => <div><div className="font-mono">{`${r.dst_host || r.dst_ip || '�?"'}${r.dst_port ? `:${r.dst_port}` : ''}`}</div>{r.dst_host && r.dst_host !== r.dst_ip && r.dst_ip && r.dst_ip !== 'local' ? <div className="text-[11px] text-mute">{r.dst_ip}</div> : null}</div> },
+            { h: 'Proto', r: (r) => r.protocol }, { h: 'TCP flags', r: (r) => r.flags || '-', cls: 'font-mono' }, { h: 'Packets', r: (r) => r.packets }, { h: 'Size', r: (r) => fmtBytes(r.bytes ?? 0) }, { h: 'Process', r: (r) => r.process || '-' }]} />
       </Panel>
       <div className="grid gap-5 xl:grid-cols-[2fr_1fr]">
         <Panel title="Connections by process" right={<label className="flex items-center gap-2 text-xs text-mute"><input type="checkbox" checked={onlyExt} onChange={(e) => setOnlyExt(e.target.checked)} />External only</label>}>
           {conns?.error && <div className="px-4 pb-2"><Notice tone="warn">{conns.error}</Notice></div>}
           <div className="max-h-[420px] overflow-auto"><Table rows={list.slice(0, 300)} empty="No connections."
-            cols={[{ h: 'Process', r: (c) => `${c.process || '—'}${c.pid ? ` (${c.pid})` : ''}` }, { h: 'Local', r: (c) => c.local, cls: 'font-mono' }, { h: 'Remote', r: (c) => c.remote || '—', cls: 'font-mono' },
+            cols={[{ h: 'Process', r: (c) => `${c.process || '-'}${c.pid ? ` (${c.pid})` : ''}` }, { h: 'Local', r: (c) => c.local, cls: 'font-mono' },
+              { h: 'Remote', r: (c) => <div><div className="font-mono">{(c.remote_host && c.remote_host !== c.remote_ip ? `${c.remote_host}${c.remote?.includes(':') ? `:${c.remote.split(':').pop()}` : ''}` : c.remote) || '-'}</div>{c.remote_host && c.remote_ip && c.remote_host !== c.remote_ip ? <div className="text-[11px] text-mute">{c.remote}</div> : null}</div> },
               { h: 'State', r: (c) => c.status }, { h: 'Scope', r: (c) => (c.external ? <span className="text-amber">external</span> : 'local/LAN') }]} /></div>
         </Panel>
         <Panel title="Open (listening) ports"><div className="max-h-[420px] overflow-auto"><Table rows={conns?.listening ?? []} empty="None found."

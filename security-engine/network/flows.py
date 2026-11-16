@@ -3,6 +3,8 @@ import threading
 import time
 from collections import deque
 
+from network.connections import resolve_host
+
 
 class FlowAggregator:
     def __init__(self):
@@ -72,8 +74,12 @@ class FlowAggregator:
                 self.secs.pop(s, None)
         rows = []
         for (direction, remote, rport, lport, proto), f in sorted(flows.items(), key=lambda kv: -kv[1]["bytes"])[:limit]:
-            rows.append({"ts": f["last"], "src_ip": remote if direction == "in" else "local",
-                         "dst_ip": "local" if direction == "in" else remote,
+            src_ip = remote if direction == "in" else "local"
+            dst_ip = "local" if direction == "in" else remote
+            src_host = resolve_host(src_ip) if direction == "in" else "local"
+            dst_host = resolve_host(dst_ip) if direction == "out" else "local"
+            rows.append({"ts": f["last"], "src_ip": src_ip, "src_host": src_host,
+                         "dst_ip": dst_ip, "dst_host": dst_host,
                          "src_port": rport if direction == "in" else lport,
                          "dst_port": lport if direction == "in" else rport,
                          "protocol": proto, "direction": direction, "packets": f["packets"], "bytes": f["bytes"],

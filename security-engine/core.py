@@ -140,16 +140,19 @@ class Engine:
 
     def _on_new_external(self, row: dict, demo=False):
         self.counters["new_ext"] += 1
-        host, _, port = row["remote"].rpartition(":")
-        ev = {"ts": time.time(), "src_ip": row["local"].rpartition(":")[0], "dst_ip": host,
+        host = row.get("remote_ip") or row["remote"].rpartition(":")[0]
+        host_name = row.get("remote_host") or host
+        _, _, port = row["remote"].rpartition(":")
+        ev = {"ts": time.time(), "src_ip": row["local"].rpartition(":")[0], "dst_ip": host, "dst_host": host_name,
               "src_port": int(row["local"].rpartition(":")[2] or 0), "dst_port": int(port or 0), "protocol": row["proto"],
               "direction": "out", "packets": 0, "bytes": 0, "flags": "NEW_CONN", "pid": row["pid"],
               "process": row["process"], "is_demo": int(demo)}
         self.db.insert("network_events", ev)
         self.publish("event", table="network_events", row=ev)
         # only a process that already has other suspicious behaviour gets this connection attached
-        self.corr.add_signal(Signal("external_connection", ev["ts"], f"{row['process'] or row['pid']} connected to {row['remote']}",
-                                    "LOW", row["pid"], host, {"dst": row["remote"], "process": row["process"]}, demo),
+        label = f"{host_name} ({host})" if host_name and host_name != host else host
+        self.corr.add_signal(Signal("external_connection", ev["ts"], f"{row['process'] or row['pid']} connected to {label}",
+                                    "LOW", row["pid"], host_name, {"dst": row["remote"], "dst_host": host_name, "process": row["process"]}, demo),
                              only_if_group_exists=True)
 
     # ------------------------------------------------------------------ processes
@@ -305,12 +308,16 @@ class Engine:
     # ------------------------------------------------------------------ periodic analysis
     def _tick_loop(self):
         n = 0
+        last_cycle = time.time()
         while not self._stop.wait(self.settings["tick_seconds"]):
             try:
                 self.tick()
                 n += 1
                 if n % 720 == 0:
                     self.db.purge_older_than(self.settings["retention_days"])
+                if self.settings.get("scan_every_minutes", 0) and time.time() - last_cycle >= self.settings["scan_every_minutes"] * 60:
+                    self.scan_cycle()
+                    last_cycle = time.time()
             except Exception:
                 log.exception("tick failed")
 
@@ -349,6 +356,30 @@ class Engine:
             self.db.insert("risk_scores", {"ts": now, "score": score, "level": self.latest_risk["level"], "components": comps})
         self.publish("risk", risk=self.latest_risk, metrics={"pps": m["pps"], "bps": m["bps"], "cps": m["cps"], "ts": now}, system=sysm)
         self.publish("stats", stats=self.stats())
+
+    def scan_cycle(self):
+        """Clear recorded detections and re-scan the current system state."""
+        with self.corr.lock:
+            self.db.purge_recorded()
+            self.corr.reset()
+            self.cooldowns.clear()
+            self.counters.clear()
+            self.portscan.flows.clear()
+            self.synflood.counts.clear()
+            self.brute.attempts.clear()
+            self.brute_demo.attempts.clear()
+            self.traffic.baseline.clear()
+            self.traffic._cached_var.clear()
+            self.latest_risk = {"score": 0, "level": "LOW", "components": {}}
+            self._last_risk_save = 0.0
+            if self.proc_mon:
+                self.proc_mon.prime()
+                for i in self.proc_mon.known.values():
+                    self.corr.note_process(i["pid"], {"name": i["name"], "exe": i["exe"], "user": i["user"]})
+        self.publish("cleared", reason="scan_cycle")
+        self.publish("risk", risk=self.latest_risk, metrics={"pps": 0, "bps": 0, "cps": 0, "ts": time.time()}, system=self.latest_sys)
+        self.publish("stats", stats=self.stats())
+        self.publish("status", status=self.status())
 
     # ------------------------------------------------------------------ queries
     def stats(self) -> dict:

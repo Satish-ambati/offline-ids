@@ -53,7 +53,8 @@ export function AttackMap({ nodes, pps, live, level, motion, onSelect, selectedI
       const cap = P.motion === 'full' ? 42 : 14;
       const srcs = placed.current.filter((n) => n.kind === 'source' || n.kind === 'internet');
       const bad = placed.current.filter((n) => n.severity && n.severity !== 'LOW' && n.kind !== 'monitor');
-      const rate = P.live ? Math.min(P.motion === 'full' ? 14 : 5, Math.log2(1 + P.pps) * 1.4) : 0;   // driven by real packets-per-second
+      const measured = Math.min(P.motion === 'full' ? 14 : 5, Math.log2(1 + P.pps) * 1.4);   // driven by real packets-per-second
+      const rate = P.live ? (measured > 0.15 ? measured : (P.motion === 'full' ? 1.8 : 0.8)) : 0; // ambient when live but capture/pps unavailable
       acc += rate * dt;
       while (acc >= 1 && packets.length < cap && srcs.length) {
         acc -= 1;
@@ -154,7 +155,7 @@ export function AttackMap({ nodes, pps, live, level, motion, onSelect, selectedI
     return () => { running = false; cancelAnimationFrame(raf); ro.disconnect(); document.removeEventListener('visibilitychange', vis); };
   }, []);
 
-  useEffect(() => { if (motion === 'off') redraw.current(); }, [nodes, motion, level, live, selectedId]);
+  useEffect(() => { if (motion === 'off') redraw.current(); }, [nodes, motion, level, live, selectedId, pps]);
 
   const click = (e: React.MouseEvent) => {
     const r = ref.current!.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
